@@ -1,0 +1,14 @@
+name: smart-adaptive-traffic-signal
+version: 0.1.0
+description: Smart adaptive traffic signal control environment with priority vehicle and emergency vehicle priority handling.
+author: Scaler School of Technology
+license: Apache-2.0
+entrypoint: smart_traffic_signal.env:SmartAdaptiveTrafficSignalEnv
+python:
+  package: smart_traffic_signal
+  requires: ">=3.10"
+metadata:
+  tasks:
+    - easy
+    - medium
+    - hard

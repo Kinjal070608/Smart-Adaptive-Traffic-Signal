@@ -1,0 +1,20 @@
+[project]
+name = "smart_adaptive_traffic_signal"
+version = "0.1.0"
+description = "OpenEnv environment for smart adaptive traffic signal control with priority vehicles."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=1.10.0",
+    "openai>=1.0.0",
+    "openenv-core>=0.2.0"
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
