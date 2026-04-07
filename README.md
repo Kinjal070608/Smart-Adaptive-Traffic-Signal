@@ -1,13 +1,13 @@
 ---
-title: Smart Adaptive Traffic Signal 🚦
+title: Smart Adaptive Traffic Signal
 emoji: 🚦
 colorFrom: blue
 colorTo: green
 sdk: gradio
+sdk_version: "4.0.0"
 app_file: app.py
 pinned: false
 ---
-
 # Smart Adaptive Traffic Signal OpenEnv Environment
 
 A real-world traffic management environment that simulates a four-way intersection with adaptive signal control and priority handling for emergency vehicles such as ambulances.
