@@ -6,7 +6,7 @@ from openai import OpenAI
 from smart_traffic_signal.env import SmartAdaptiveTrafficSignalEnv
 from smart_traffic_signal.schemas import TrafficAction
 
-MAX_STEPS = 40
+MAX_STEPS = 50
 SUCCESS_SCORE_THRESHOLD = 0.6
 TASKS = ["easy", "medium", "hard"]
 
