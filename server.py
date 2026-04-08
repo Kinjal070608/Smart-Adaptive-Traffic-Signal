@@ -21,9 +21,10 @@ class StepRequest(BaseModel):
     task_name: str = "easy"
 
 
+@app.get("/")
 @app.get("/health")
 async def health() -> Dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "project": "Smart Adaptive Traffic Signal"}
 
 
 @app.post("/reset")

@@ -148,15 +148,13 @@ bash validate.sh
 
 The baseline script uses the OpenAI API client and requires these environment variables:
 
-- `OPENAI_API_KEY` — your OpenAI or compatible LLM API key
 - `API_BASE_URL` — the API endpoint (e.g., `https://api.openai.com/v1`)
 - `MODEL_NAME` — the model identifier (e.g., `gpt-4`, `gpt-3.5-turbo`)
-- `HF_TOKEN` — your Hugging Face token (required by hackathon infrastructure)
+- `HF_TOKEN` — your Hugging Face token (required by hackathon infrastructure and used as the API key)
 
 Run:
 
 ```bash
-export OPENAI_API_KEY="your-key"
 export API_BASE_URL="https://api.openai.com/v1"
 export MODEL_NAME="gpt-3.5-turbo"
 export HF_TOKEN="your-hf-token"

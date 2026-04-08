@@ -27,7 +27,7 @@ def get_model_action(client: OpenAI, model_name: str, task_name: str, step: int,
     prompt = (
         "You are controlling a traffic signal at a four-way intersection. "
         "Choose the next phase as NS or EW only. "
-        "You should minimize overall queue build-up and prioritize any ambulance or emergency vehicle waiting. "
+        "You must minimize overall queue build-up and STRICTLY prioritize any emergency vehicle waiting. "
         "Current state:\n"
         f"- Task: {task_name}\n"
         f"- Step: {step}\n"
@@ -40,7 +40,7 @@ def get_model_action(client: OpenAI, model_name: str, task_name: str, step: int,
     )
 
     messages: List[Any] = [
-        {"role": "system", "content": "You are a traffic signal controller optimizing throughput and emergency vehicle response."},
+        {"role": "system", "content": "You are a traffic signal controller optimizing throughput and emergency vehicle response. Always respond with 'NS' or 'EW'."},
         {"role": "user", "content": prompt},
     ]
 
@@ -60,6 +60,13 @@ def get_model_action(client: OpenAI, model_name: str, task_name: str, step: int,
                 return "EW"
     except Exception as exc:
         print(f"[DEBUG] OpenAI API error: {exc}", flush=True)
+
+    if observation.get("active_priority"):
+        priority_approach = observation.get("next_priority_approach")
+        if priority_approach in {"N", "S"}:
+            return "NS"
+        elif priority_approach in {"E", "W"}:
+            return "EW"
 
     ns_queue = observation["queue_north"] + observation["queue_south"]
     ew_queue = observation["queue_east"] + observation["queue_west"]
@@ -96,16 +103,15 @@ def run_task(client: OpenAI, model_name: str, task_name: str) -> float:
 
 
 def main() -> int:
-    api_key = os.getenv("OPENAI_API_KEY")
     api_base_url = os.getenv("API_BASE_URL")
     model_name = os.getenv("MODEL_NAME")
     hf_token = os.getenv("HF_TOKEN")
 
-    if not api_key or not api_base_url or not model_name or not hf_token:
-        print("[ERROR] OPENAI_API_KEY, API_BASE_URL, MODEL_NAME, and HF_TOKEN must be provided.", flush=True)
+    if not api_base_url or not model_name or not hf_token:
+        print("[ERROR] API_BASE_URL, MODEL_NAME, and HF_TOKEN must be provided.", flush=True)
         return 1
 
-    client = OpenAI(base_url=api_base_url, api_key=api_key)
+    client = OpenAI(base_url=api_base_url, api_key=hf_token)
     total_score = 0.0
 
     for task_name in TASKS:
