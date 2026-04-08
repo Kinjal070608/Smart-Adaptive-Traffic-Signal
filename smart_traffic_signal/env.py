@@ -129,7 +129,7 @@ class SmartAdaptiveTrafficSignalEnv:
         base_capacity = 2 if total_queue >= 10 else 1
 
         for approach in directions:
-            if self.active_priority and self.queues[approach] > 0:
+            if self.active_priority and approach == self.active_priority_approach and self.queues[approach] > 0:
                 departed_priority += 1
                 self.queues[approach] -= 1
                 self.total_priority_departed += 1
