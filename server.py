@@ -73,6 +73,13 @@ async def state(task_name: str = "easy") -> Dict[str, object]:
     return {"state": env.state()}
 
 
+import gradio as gr
+from app import run_demo
+
+# Mount the Gradio UI at the root so it's still accessible!
+demo = run_demo()
+app = gr.mount_gradio_app(app, demo, path="/")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)

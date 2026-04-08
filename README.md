@@ -3,9 +3,7 @@ title: Smart Adaptive Traffic Signal
 emoji: 🚦
 colorFrom: blue
 colorTo: green
-sdk: gradio
-sdk_version: "4.0.0"
-app_file: app.py
+sdk: docker
 pinned: false
 ---
 # Smart Adaptive Traffic Signal OpenEnv Environment
