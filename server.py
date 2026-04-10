@@ -22,7 +22,9 @@ async def health() -> Dict[str, str]:
     return {"status": "ok", "project": "Smart Adaptive Traffic Signal"}
 
 @app.post("/reset")
-async def reset(request: ResetRequest = Body(...)) -> Dict[str, object]:
+async def reset(request: ResetRequest = None) -> Dict[str, object]:
+    if request is None:
+        request = ResetRequest()
     env = SmartAdaptiveTrafficSignalEnv(task_name=request.task_name, seed=request.seed)
     _env_store[request.task_name] = env
     observation = env.reset()
