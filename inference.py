@@ -1,4 +1,6 @@
+import json
 import os
+import re
 from typing import Any, List
 
 from openai import OpenAI
@@ -24,20 +26,26 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
 
 
 def get_model_action(client: OpenAI, model_name: str, task_name: str, step: int, observation: dict, history: List[str]) -> str:
-    prompt = (
-        "You are controlling a traffic signal at a four-way intersection. "
-        "Choose the next phase as NS or EW only. "
-        "You must minimize overall queue build-up and STRICTLY prioritize any emergency vehicle waiting. "
-        "Current state:\n"
-        f"- Task: {task_name}\n"
-        f"- Step: {step}\n"
-        f"- Phase: {observation['phase']}\n"
-        f"- Queues: N={observation['queue_north']}, E={observation['queue_east']}, "
-        f"S={observation['queue_south']}, W={observation['queue_west']}\n"
-        f"- Active priority: {observation['active_priority']}\n"
-        f"- Priority direction: {observation['next_priority_approach']}\n"
-        "Return only NS or EW."
-    )
+    prompt = f"""You are an advanced smart traffic light controller.
+Your goal is to maximize throughput and minimize delay.
+
+Current Observation:
+{json.dumps(observation, indent=2)}
+
+Instructions:
+1. Analyze the queue lengths: Northern: {observation.get('queue_north')}, Southern: {observation.get('queue_south')}, Eastern: {observation.get('queue_east')}, Western: {observation.get('queue_west')} 
+2. Check for emergency vehicles! If active_priority is true, you MUST switch to the next_priority_approach immediately.
+3. THINK logically about the best phase (NS or EW) inside <thought>...</thought> blocks.
+4. Output your final decision inside an <action> block.
+
+Decision Format:
+<thought>
+[Your step-by-step reasoning]
+</thought>
+<action>NS</action> 
+OR 
+<action>EW</action>
+"""
 
     messages: List[Any] = [
         {"role": "system", "content": "You are a traffic signal controller optimizing throughput and emergency vehicle response. Always respond with 'NS' or 'EW'."},
@@ -49,15 +57,16 @@ def get_model_action(client: OpenAI, model_name: str, task_name: str, step: int,
             model=model_name,
             messages=messages,
             temperature=0.0,
-            max_tokens=20,
+            max_tokens=200,
         )
         content = response.choices[0].message.content
         if content:
-            content = content.strip().upper()
-            if "NS" in content:
-                return "NS"
-            if "EW" in content:
-                return "EW"
+            match = re.search(r'<action>\s*(NS|EW)\s*</action>', content, re.IGNORECASE)
+            if match:
+                return match.group(1).upper()
+            else:
+                 # Raw heuristic fallback if regex fails
+                 return "NS" if "NS" in content.upper() else "EW"
     except Exception as exc:
         print(f"[DEBUG] OpenAI API error: {exc}", flush=True)
 
