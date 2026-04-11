@@ -24,7 +24,6 @@ class SmartAdaptiveTrafficSignalEnv:
         self.step_count = 0
         self.phase: Phase = "NS"
         self.queues: Dict[str, int] = self.task.initial_queues.copy()
-        self.priority_queue: List[Dict[str, int]] = []
         self.total_departed = 0
         self.total_priority_departed = 0
         self.priority_delay_total = 0
@@ -37,6 +36,8 @@ class SmartAdaptiveTrafficSignalEnv:
         self.active_priority_approach: PriorityApproach = "NONE"
         self.active_priority_deadline = 0
         self.priority_wait = 0
+        # Re-seed RNG so repeated reset() calls always produce identical trajectories
+        self.random = random.Random(self.seed)
         self._update_observation()
         return self.observation
 
@@ -45,7 +46,6 @@ class SmartAdaptiveTrafficSignalEnv:
             raise ValueError("Action phase must be 'NS' or 'EW'.")
 
         self.step_count += 1
-        previous_phase = self.phase
         if action.phase != self.phase:
             self.phase = action.phase
             self.switches += 1
@@ -128,18 +128,25 @@ class SmartAdaptiveTrafficSignalEnv:
         # Adaptive capacity: reduce if less traffic
         base_capacity = 2 if total_queue >= 10 else 1
 
-        for approach in directions:
-            if self.active_priority and approach == self.active_priority_approach and self.queues[approach] > 0:
-                departed_priority += 1
-                self.queues[approach] -= 1
-                self.total_priority_departed += 1
-                self.priority_passed += 1
-                self.active_priority = False
-                self.priority_wait = 0
-                break
+        # Track which approach was served as priority
+        priority_served_approach: str | None = None
+        if self.active_priority and self.active_priority_approach in directions and self.queues[self.active_priority_approach] > 0:
+            approach = self.active_priority_approach
+            departed_priority += 1
+            self.queues[approach] -= 1
+            self.total_priority_departed += 1
+            self.priority_passed += 1
+            self.active_priority = False
+            self.active_priority_approach = cast(PriorityApproach, "NONE")
+            self.priority_wait = 0
+            priority_served_approach = approach
 
         for approach in directions:
+            # If this approach was used for a priority vehicle, it has one less capacity for normal vehicles
             capacity = base_capacity
+            if approach == priority_served_approach:
+                capacity -= 1
+            
             while capacity > 0 and self.queues[approach] > 0:
                 self.queues[approach] -= 1
                 departed_normal += 1

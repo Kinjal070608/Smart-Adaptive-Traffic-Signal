@@ -90,8 +90,9 @@ def main() -> None:
     if os.getenv("ENABLE_WEB_INTERFACE", "false").lower() == "true":
         try:
             import gradio as gr
-            import sys
-            sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+            root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if root_dir not in sys.path:
+                sys.path.insert(0, root_dir)
             from app import run_demo  # root-level app.py
 
             demo = run_demo()

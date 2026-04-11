@@ -45,8 +45,14 @@ def grade_hard(metrics: Dict[str, float]) -> float:
     average_queue = metrics.get("average_queue", 0.0)
     priority_passed = metrics.get("priority_passed", 0)
     priority_delay = metrics.get("priority_delay_total", 0.0)
+    
     throughput_score = _clamp(throughput / 34.0)
-    priority_score = 0.0 if priority_passed == 0 else _clamp(1.0 - min(priority_delay / 12.0, 1.0))
+    # Hard task always has 2 priority vehicles
+    priority_count = 2
+    priority_passage_ratio = _clamp(priority_passed / priority_count)
+    priority_delay_score = _clamp(1.0 - min(priority_delay / 15.0, 1.0))
+    priority_score = priority_passage_ratio * priority_delay_score
+    
     balance_score = _clamp(1.0 - min(average_queue / 8.0, 1.0))
     return _clamp(0.4 * throughput_score + 0.4 * priority_score + 0.2 * balance_score)
 

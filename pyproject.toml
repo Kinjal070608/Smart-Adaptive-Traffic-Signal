@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 smart-traffic-signal-server = "server.app:main"
+server = "server.app:main"
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
