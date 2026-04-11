@@ -68,9 +68,9 @@
 
 - [ ] **Run container**
   ```bash
-  docker run --rm -p 8080:8080 smart-traffic-signal
+  docker run --rm -p 7860:7860 smart-traffic-signal
   # In another terminal:
-  curl http://localhost:8080/health
+  curl http://localhost:7860/health
   ```
 
 - [ ] **Install openenv-core**

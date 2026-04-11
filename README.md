@@ -193,7 +193,7 @@ Build and run the container:
 
 ```bash
 docker build -t smart-traffic-signal .
-docker run --rm -p 8080:8080 smart-traffic-signal
+docker run --rm -p 7860:7860 smart-traffic-signal
 ```
 
 The container starts the FastAPI server for the OpenEnv-compatible space.
