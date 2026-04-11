@@ -128,7 +128,7 @@ def main() -> int:
         total_score += task_score
 
     average_score = total_score / len(TASKS)
-    print(f"[END] overall_score={average_score:.4f}", flush=True)
+    print(f"[SUMMARY] overall_average_score={average_score:.4f}", flush=True)
     return 0
 
 

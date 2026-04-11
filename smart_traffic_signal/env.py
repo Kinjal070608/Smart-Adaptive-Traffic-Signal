@@ -173,7 +173,6 @@ class SmartAdaptiveTrafficSignalEnv:
         return reward, details
 
     def _update_observation(self) -> None:
-        next_priority_approach = cast(PriorityApproach, next((event.approach for event in self.task.priority_schedule if event.step <= self.step_count), "NONE"))
         self.observation = TrafficObservation(
             step=self.step_count,
             phase=self.phase,

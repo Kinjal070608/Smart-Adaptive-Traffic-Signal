@@ -9,7 +9,8 @@ dependencies = [
     "uvicorn[standard]>=0.24.0",
     "pydantic>=1.10.0",
     "openai>=1.0.0",
-    "openenv-core>=0.2.0"
+    "openenv-core>=0.2.0",
+    "gradio>=4.0.0"
 ]
 
 [project.scripts]
