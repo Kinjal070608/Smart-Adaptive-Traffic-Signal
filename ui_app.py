@@ -90,6 +90,14 @@ def run_demo():
                     step_gauge = gr.Number(label="Steps", value=0, interactive=False)
                     reward_gauge = gr.Number(label="Reward", value=0.0, interactive=False)
                 score_display = gr.Markdown("## Score: 0.0000")
+        with gr.Accordion("Technical Specs & Legend", open=False):
+            gr.Markdown("""
+            ### Metrics & Reward Structure
+            - **NS Phase**: North-South traffic moves.
+            - **EW Phase**: East-West traffic moves.
+            - **Emergency First**: Agents are penalized heavily for delaying ambulances.
+            - **Congestion Trend**: The analytics chart tracks the total vehicle backlog.
+            """)
         reset_btn.click(initialize_ui, [task_input, seed_input], [grid_viz, analytics_viz, status_txt, step_gauge, reward_gauge, score_display])
         step_btn.click(run_step, [phase_input], [grid_viz, analytics_viz, status_txt, step_gauge, reward_gauge, score_display])
         auto_btn.click(run_auto_move, None, [grid_viz, analytics_viz, status_txt, step_gauge, reward_gauge, score_display])

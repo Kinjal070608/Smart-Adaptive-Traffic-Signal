@@ -94,8 +94,8 @@ def main() -> None:
             root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             if root_dir not in sys.path:
                 sys.path.insert(0, root_dir)
-            from app import run_demo  # root-level app.py
-
+            from ui_app import run_demo  # updated filename
+            
             demo = run_demo()
             mounted_app = gr.mount_gradio_app(app, demo, path="/")
             uvicorn.run(mounted_app, host="0.0.0.0", port=7860)
