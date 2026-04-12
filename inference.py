@@ -1,9 +1,14 @@
 import json
 import os
 import re
+import sys
+import traceback
 from typing import Any, List
 
 from openai import OpenAI
+
+# Ensure the local smart_traffic_signal package is in the path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from smart_traffic_signal.env import SmartAdaptiveTrafficSignalEnv
 from smart_traffic_signal.schemas import TrafficAction
@@ -23,6 +28,13 @@ def log_step(step: int, action: str, reward: float, done: bool, error: str | Non
 
 def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     print(f"[END] success={success} steps={steps} score={score:.4f} rewards={rewards}", flush=True)
+
+
+def get_obs_dict(observation: Any) -> dict:
+    """Helper for Pydantic v1/v2 compatibility."""
+    if hasattr(observation, "model_dump"):
+        return observation.model_dump()
+    return observation.dict()
 
 
 def get_model_action(client: OpenAI, model_name: str, task_name: str, step: int, observation: dict, history: List[str]) -> str:
@@ -59,14 +71,17 @@ OR
             temperature=0.0,
             max_tokens=200,
         )
-        content = response.choices[0].message.content
-        if content:
-            match = re.search(r'<action>\s*(NS|EW)\s*</action>', content, re.IGNORECASE)
-            if match:
-                return match.group(1).upper()
-            else:
-                 # Raw heuristic fallback if regex fails
-                 return "NS" if "NS" in content.upper() else "EW"
+        if not response.choices:
+            print("[DEBUG] OpenAI API returned no choices.", flush=True)
+        else:
+            content = response.choices[0].message.content
+            if content:
+                match = re.search(r'<action>\s*(NS|EW)\s*</action>', content, re.IGNORECASE)
+                if match:
+                    return match.group(1).upper()
+                else:
+                     # Raw heuristic fallback if regex fails
+                     return "NS" if "NS" in content.upper() else "EW"
     except Exception as exc:
         print(f"[DEBUG] OpenAI API error: {exc}", flush=True)
 
@@ -92,7 +107,8 @@ def run_task(client: OpenAI, model_name: str, task_name: str) -> float:
     log_start(task=task_name, env="smart_adaptive_traffic_signal", model=model_name)
 
     for step in range(1, MAX_STEPS + 1):
-        action_phase = get_model_action(client, model_name, task_name, step, observation.model_dump(), history)
+        obs_dict = get_obs_dict(observation)
+        action_phase = get_model_action(client, model_name, task_name, step, obs_dict, history)
         if action_phase not in {"NS", "EW"}:
             action_phase = "NS"
 
@@ -120,16 +136,21 @@ def main() -> int:
         print("[ERROR] API_BASE_URL, MODEL_NAME, and HF_TOKEN must be provided.", flush=True)
         return 1
 
-    client = OpenAI(base_url=api_base_url, api_key=hf_token)
-    total_score = 0.0
+    try:
+        client = OpenAI(base_url=api_base_url, api_key=hf_token)
+        total_score = 0.0
 
-    for task_name in TASKS:
-        task_score = run_task(client, model_name, task_name)
-        total_score += task_score
+        for task_name in TASKS:
+            task_score = run_task(client, model_name, task_name)
+            total_score += task_score
 
-    average_score = total_score / len(TASKS)
-    print(f"[SUMMARY] overall_average_score={average_score:.4f}", flush=True)
-    return 0
+        average_score = total_score / len(TASKS)
+        print(f"[SUMMARY] overall_average_score={average_score:.4f}", flush=True)
+        return 0
+    except Exception as e:
+        print(f"[ERROR] Unhandled exception in main: {e}", flush=True)
+        traceback.print_exc()
+        return 1
 
 
 if __name__ == "__main__":
