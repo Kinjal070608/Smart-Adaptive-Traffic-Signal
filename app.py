@@ -1,9 +1,7 @@
 import gradio as gr
 import os
 import sys
-import json
-import time
-from typing import cast, Dict, Any, Tuple, List
+from typing import cast, Dict, Any, List
 from smart_traffic_signal.env import SmartAdaptiveTrafficSignalEnv
 from smart_traffic_signal.schemas import TrafficAction, Phase
 
@@ -24,173 +22,78 @@ CSS = """
 .spark-label { color: #94a3b8; font-size: 0.7em; margin-bottom: 5px; }
 """
 
-# Global state for UI persistence
-state = {
-    "env": None,
-    "last_obs": None,
-    "history": [] # List of total_queue counts
-}
+# Global state
+state = {"env": None, "last_obs": None, "history": []}
 
 def format_grid_html(obs: Dict[str, Any]) -> str:
-    """Generate the dynamic HTML for the traffic grid."""
     if not obs: return "<p>Environment not initialized</p>"
-    
     phase = obs.get("phase", "NS")
     p_active = obs.get("active_priority", False)
     p_app = obs.get("next_priority_approach", "NONE")
-    
     light_ns = "light-green" if phase == "NS" else "light-red"
     light_ew = "light-green" if phase == "EW" else "light-red"
-    
     def cell_style(app: str):
-        if p_active and p_app == app:
-            return "border: 2px solid #f59e0b; background: #451a03;"
+        if p_active and p_app == app: return "border: 2px solid #f59e0b; background: #451a03;"
         return ""
-
-    grid_html = f"""
-    <div class="dashboard-container">
-        {f'<div class="priority-alert">⚠️ EMERGENCY VEHICLE approaching from {p_app}!</div>' if p_active else ''}
-        <div class="traffic-grid">
-            <div class="empty"></div>
-            <div class="road-cell" style="{cell_style('N')}">
-                <span>North</span>
-                <div class="light {light_ns}"></div>
-                <div class="queue-pill">{obs.get('queue_north', 0)} vehicles</div>
-            </div>
-            <div class="empty"></div>
-            
-            <div class="road-cell" style="{cell_style('W')}">
-                <span>West</span>
-                <div class="light {light_ew}"></div>
-                <div class="queue-pill">{obs.get('queue_west', 0)} vehicles</div>
-            </div>
-            <div class="road-cell intersection">
-                <span style="font-size:0.7em; color:#94a3b8;">INTX</span>
-                <div style="font-size:1.2em;">{phase}</div>
-            </div>
-            <div class="road-cell" style="{cell_style('E')}">
-                <span>East</span>
-                <div class="light {light_ew}"></div>
-                <div class="queue-pill">{obs.get('queue_east', 0)} vehicles</div>
-            </div>
-            
-            <div class="empty"></div>
-            <div class="road-cell" style="{cell_style('S')}">
-                <span>South</span>
-                <div class="light {light_ns}"></div>
-                <div class="queue-pill">{obs.get('queue_south', 0)} vehicles</div>
-            </div>
-            <div class="empty"></div>
-        </div>
-    </div>
-    """
+    grid_html = f'<div class="dashboard-container">{"<div class=\'priority-alert\'>⚠️ EMERGENCY VEHICLE approaching from " + p_app + "!</div>" if p_active else ""}<div class="traffic-grid"><div class="empty"></div><div class="road-cell" style="{cell_style("N")}"><span>North</span><div class="light {light_ns}"></div><div class="queue-pill">{obs.get("queue_north", 0)} vehicles</div></div><div class="empty"></div><div class="road-cell" style="{cell_style("W")}"><span>West</span><div class="light {light_ew}"></div><div class="queue-pill">{obs.get("queue_west", 0)} vehicles</div></div><div class="road-cell intersection"><span style="font-size:0.7em; color:#94a3b8;">INTX</span><div style="font-size:1.2em;">{phase}</div></div><div class="road-cell" style="{cell_style("E")}"><span>East</span><div class="light {light_ew}"></div><div class="queue-pill">{obs.get("queue_east", 0)} vehicles</div></div><div class="empty"></div><div class="road-cell" style="{cell_style("S")}"><span>South</span><div class="light {light_ns}"></div><div class="queue-pill">{obs.get("queue_south", 0)} vehicles</div></div><div class="empty"></div></div></div>'
     return grid_html
 
 def format_analytics_html(history: List[int]) -> str:
-    """Generate a clean sparkline chart for congestion metrics."""
     if not history: return "<p style='color:#94a3b8; font-size:0.8em;'>No data yet</p>"
-    
     max_q = max(history) if history else 1
-    bars = ""
-    # Keep only last 30 steps for visual clarity
-    for q in history[-30:]:
-        height = (q / 30.0) * 100 # Scaled height
-        bars += f"<div class='spark-bar' style='height: {min(height, 100)}%; opacity: {0.4 + (q/max_q)*0.6};'></div>"
-    
-    return f"""
-    <div style="margin-top:10px;">
-        <div class="spark-label">Congestion Trend (Last 30 Steps)</div>
-        <div class="sparkline-container">
-            {bars}
-        </div>
-    </div>
-    """
+    bars = "".join([f"<div class='spark-bar' style='height: {min((q/30.0)*100, 100)}%; opacity: {0.4+(q/max_q)*0.6};'></div>" for q in history[-30:]])
+    return f'<div style="margin-top:10px;"><div class="spark-label">Congestion Trend (Last 30 Steps)</div><div class="sparkline-container">{bars}</div></div>'
 
 def initialize_ui(task: str, seed: int):
     env = SmartAdaptiveTrafficSignalEnv(task_name=task, seed=int(seed))
     obs = env.reset()
-    state["env"] = env
-    state["last_obs"] = obs.model_dump()
-    state["history"] = [obs.queue_north + obs.queue_east + obs.queue_south + obs.queue_west]
-    
+    state.update({"env": env, "last_obs": obs.model_dump(), "history": [sum([obs.queue_north, obs.queue_east, obs.queue_south, obs.queue_west])]})
     return format_grid_html(state["last_obs"]), format_analytics_html(state["history"]), f"Ready - Task: {task}", 0, 0.0, f"Score: {env.evaluate():.4f}"
 
 def run_step(phase: str):
-    if state["env"] is None:
-        return gr.update(), gr.update(), "Please reset first", 0, 0.0, "Score: 0.0"
-    
-    env = state["env"]
-    action = TrafficAction(phase=cast(Phase, phase))
-    obs, reward, done, info = env.step(action)
+    if not state["env"]: return gr.update(), gr.update(), "Reset first", 0, 0.0, "Score: 0.0"
+    obs, reward, done, info = state["env"].step(TrafficAction(phase=cast(Phase, phase)))
     state["last_obs"] = obs.model_dump()
-    
-    # Update history
-    total_q = obs.queue_north + obs.queue_east + obs.queue_south + obs.queue_west
-    state["history"].append(total_q)
-    
-    score = env.evaluate()
-    status = "COMPLETED" if done else "RUNNING"
-    return format_grid_html(state["last_obs"]), format_analytics_html(state["history"]), f"Step {obs.step} - Status: {status}", obs.step, reward.value, f"Score: {score:.4f}"
+    state["history"].append(obs.queue_north + obs.queue_east + obs.queue_south + obs.queue_west)
+    return format_grid_html(state["last_obs"]), format_analytics_html(state["history"]), f"Step {obs.step} - {'COMPLETED' if done else 'RUNNING'}", obs.step, reward.value, f"Score: {state['env'].evaluate():.4f}"
 
 def run_auto_move():
-    if state["env"] is None: return run_step("NS")
+    if not state["env"]: return run_step("NS")
     obs = state["last_obs"]
     if obs.get("active_priority"):
-        app = obs.get("next_priority_approach")
-        phase = "NS" if app in {"N", "S"} else "EW"
+        phase = "NS" if obs.get("next_priority_approach") in {"N", "S"} else "EW"
     else:
-        ns = obs.get("queue_north", 0) + obs.get("queue_south", 0)
-        ew = obs.get("queue_east", 0) + obs.get("queue_west", 0)
-        phase = "NS" if ns >= ew else "EW"
+        phase = "NS" if (obs.get("queue_north", 0) + obs.get("queue_south", 0)) >= (obs.get("queue_east",0) + obs.get("queue_west",0)) else "EW"
     return run_step(phase)
 
 def run_demo():
-    with gr.Blocks(theme=gr.themes.Soft(), css=CSS, title="Smart-Sync Traffic Hub") as demo:
+    with gr.Blocks(title="Smart-Sync Traffic Hub") as demo:
         gr.Markdown("# 🚥 Smart-Sync Adaptive Traffic Hub")
-        gr.Markdown("Real-time reinforcement learning simulation for emergency-first traffic management.")
-        
         with gr.Row():
             with gr.Column(scale=2):
-                grid_viz = gr.HTML(value="<p style='text-align:center;'>Initialize environment to see simulation</p>")
-                
+                grid_viz = gr.HTML(value="<p style='text-align:center;'>Initialize environment</p>")
                 with gr.Accordion("📉 Visual Analytics", open=True):
                     analytics_viz = gr.HTML(value=format_analytics_html([]))
-                
                 with gr.Row():
-                    phase_input = gr.Radio(["NS", "EW"], value="NS", label="Signal Phase Control")
+                    phase_input = gr.Radio(["NS", "EW"], value="NS", label="Phase")
                     step_btn = gr.Button("Manual Step", variant="primary")
                     auto_btn = gr.Button("💡 AI Suggestion", variant="secondary")
-            
             with gr.Column(scale=1):
                 gr.Markdown("### ⚙️ Session Config")
                 task_input = gr.Dropdown(["easy", "medium", "hard"], value="easy", label="Scenario")
-                seed_input = gr.Number(42, label="Simulation Seed", precision=0)
+                seed_input = gr.Number(42, label="Seed", precision=0)
                 reset_btn = gr.Button("Reset Simulation")
-                status_txt = gr.Textbox("Not Started", label="System Logs", interactive=False)
-                
-                gr.Separator()
+                status_txt = gr.Textbox("Not Started", label="Logs", interactive=False)
+                gr.HTML("<hr>")
                 gr.Markdown("### 📊 Performance Monitor")
                 with gr.Row():
                     step_gauge = gr.Number(label="Steps", value=0, interactive=False)
-                    reward_gauge = gr.Number(label="Last Reward", value=0.0, interactive=False)
+                    reward_gauge = gr.Number(label="Reward", value=0.0, interactive=False)
                 score_display = gr.Markdown("## Score: 0.0000")
-
-        gr.Separator()
-        with gr.Accordion("Technical Specs & Legend", open=False):
-            gr.Markdown("""
-            ### Metrics & Reward Structure
-            - **NS Phase**: North-South traffic moves.
-            - **EW Phase**: East-West traffic moves.
-            - **Emergency First**: Agents are penalized heavily for delaying ambulances.
-            - **Congestion Trend**: The analytics chart tracks the total vehicle backlog. A stable or declining line indicates 'Smart' control.
-            """)
-
         reset_btn.click(initialize_ui, [task_input, seed_input], [grid_viz, analytics_viz, status_txt, step_gauge, reward_gauge, score_display])
         step_btn.click(run_step, [phase_input], [grid_viz, analytics_viz, status_txt, step_gauge, reward_gauge, score_display])
         auto_btn.click(run_auto_move, None, [grid_viz, analytics_viz, status_txt, step_gauge, reward_gauge, score_display])
-
     return demo
 
 if __name__ == "__main__":
-    demo = run_demo()
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    run_demo().launch(server_name="0.0.0.0", server_port=7860, theme=gr.themes.Soft(), css=CSS)
