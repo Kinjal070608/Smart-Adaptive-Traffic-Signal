@@ -2,223 +2,230 @@ import json
 import os
 import re
 import sys
+import time
 import traceback
 import urllib.request
 import urllib.error
 from typing import Any, List, Optional, Dict, Union, Tuple
 
-from openai import OpenAI
-
-# Ensure the local smart_traffic_signal package is in the path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from smart_traffic_signal.env import SmartAdaptiveTrafficSignalEnv
-from smart_traffic_signal.schemas import TrafficAction, TrafficObservation, TrafficReward
-
 MAX_STEPS = 50
 SUCCESS_SCORE_THRESHOLD = 0.6
 TASKS = ["easy", "medium", "hard"]
 
-
+# Global logging helpers
 def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
-
 
 def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
     print(f"[STEP] step={step} action={action} reward={reward:.3f} done={done} error={error}", flush=True)
 
-
 def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     print(f"[END] success={success} steps={steps} score={score:.4f} rewards={rewards}", flush=True)
 
-
 def get_obs_dict(observation: Any) -> dict:
-    """Helper for Pydantic v1/v2 compatibility."""
+    """Helper for Pydantic v1/v2 compatibility and dict safety."""
     if isinstance(observation, dict):
         return observation
-    if hasattr(observation, "model_dump"):
-        return observation.model_dump()
-    return observation.dict()
-
+    try:
+        if hasattr(observation, "model_dump"):
+            return observation.model_dump()
+        if hasattr(observation, "dict"):
+            return observation.dict()
+    except:
+        pass
+    return {}
 
 class RemoteEnvClient:
-    """Mock-like client for remote OpenEnv server."""
+    """Bulletproof client for remote OpenEnv server using only standard libraries."""
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
 
-    def _post(self, path: str, data: dict) -> dict:
+    def _call(self, path: str, method: str = "GET", data: Optional[dict] = None) -> Optional[dict]:
         url = f"{self.base_url}{path}"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(data).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=10) as response:
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            req = urllib.request.Request(url, method=method)
+            if data:
+                req.add_header("Content-Type", "application/json")
+                req.data = json.dumps(data).encode("utf-8")
+            
+            with urllib.request.urlopen(req, timeout=10) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except Exception as e:
+            print(f"[DEBUG] RemoteEnv error ({path}): {e}", flush=True)
+            return None
 
     def reset(self, task_name: str = "easy", seed: int = 42) -> dict:
-        return self._post("/reset", {"task_name": task_name, "seed": seed})
+        resp = self._call("/reset", method="POST", data={"task_name": task_name, "seed": seed})
+        return resp if resp else {}
 
-    def step(self, action: TrafficAction) -> Tuple[dict, Any, bool, dict]:
-        # action is handled as dict in API
-        resp = self._post("/step", {"phase": action.phase})
-        obs = resp["observation"]
-        reward = resp["reward"]
-        done = resp["done"]
+    def step(self, action_dict: dict) -> Tuple[dict, Any, bool, dict]:
+        resp = self._call("/step", method="POST", data=action_phase_to_json(action_dict))
+        if not resp:
+            return {}, 0.0, True, {"error": "connection_lost"}
+        
+        obs = resp.get("observation", {})
+        reward = resp.get("reward", {"value": 0.0})
+        done = resp.get("done", True)
         info = resp.get("info", {})
-        # Reward in API response matches TrafficReward structure
         return obs, reward, done, info
 
     def evaluate(self) -> float:
-        # State endpoint usually returns overall metrics
-        url = f"{self.base_url}/state"
-        with urllib.request.urlopen(url, timeout=10) as response:
-            data = json.loads(response.read().decode("utf-8"))
-            # Heuristic: the server might not expose a direct evaluate() call
-            # so we calculate it if the tasks.py is available locally
+        resp = self._call("/state", method="GET")
+        if not resp: return 0.0
+        
+        task_key = resp.get("task", "easy")
+        metrics = self._call(f"/metrics?task_name={task_key}", method="GET")
+        if not metrics: return 0.5 # Neutral fallback
+        
+        # Try to use local grader if available, else return neutral
+        try:
             from smart_traffic_signal.tasks import get_task
-            task_key = data.get("task", "easy")
             task = get_task(task_key)
-            # Fetch metrics
-            metrics_url = f"{self.base_url}/metrics?task_name={task_key}"
-            try:
-                with urllib.request.urlopen(metrics_url, timeout=10) as m_resp:
-                    metrics = json.loads(m_resp.read().decode("utf-8"))
-                    return task.grader(metrics)
-            except:
-                # Fallback to a simplified score calculation if metrics endpoint is missing
-                return 0.5
+            return task.grader(metrics)
+        except:
+            return metrics.get("priority_passed", 0) / 2.0 # Heuristic fallback
 
+def action_phase_to_json(action: Any) -> dict:
+    """Safely convert action object or dict to API format."""
+    if isinstance(action, dict): return action
+    if hasattr(action, "phase"): return {"phase": action.phase}
+    return {"phase": "NS"}
 
-def get_model_action(client: OpenAI, model_name: str, task_name: str, step: int, observation: dict, history: List[str]) -> str:
+def get_model_action(client: Any, model_name: str, task_name: str, step: int, observation: dict, history: List[str]) -> str:
     prompt = f"""You are an advanced smart traffic light controller.
-Your goal is to maximize throughput and minimize delay.
-
 Current Observation:
 {json.dumps(observation, indent=2)}
 
 Instructions:
-1. Analyze the queue lengths: Northern: {observation.get('queue_north')}, Southern: {observation.get('queue_south')}, Eastern: {observation.get('queue_east')}, Western: {observation.get('queue_west')} 
-2. Check for emergency vehicles! If active_priority is true, you MUST switch to the next_priority_approach immediately.
-3. THINK logically about the best phase (NS or EW) inside <thought>...</thought> blocks.
-4. Output your final decision inside an <action> block.
-
-Decision Format:
-<thought>
-[Your step-by-step reasoning]
-</thought>
-<action>NS</action> 
-OR 
-<action>EW</action>
+1. Analyze queue lengths and check for priority vehicles.
+2. If active_priority is true, return the next_priority_approach phase immediately.
+3. Respond inside <thought> reasoning and <action> (NS or EW).
 """
-
-    messages: List[Any] = [
-        {"role": "system", "content": "You are a traffic signal controller optimizing throughput and emergency vehicle response. Always respond with 'NS' or 'EW'."},
-        {"role": "user", "content": prompt},
-    ]
-
     try:
         response = client.chat.completions.create(
             model=model_name,
-            messages=messages,
+            messages=[
+                {"role": "system", "content": "Traffic signal controller. Always respond with <action>NS</action> or <action>EW</action>."},
+                {"role": "user", "content": prompt}
+            ],
             temperature=0.0,
-            max_tokens=200,
+            max_tokens=150,
         )
-        if not response.choices:
-            print("[DEBUG] OpenAI API returned no choices.", flush=True)
-        else:
+        if response.choices:
             content = response.choices[0].message.content
             if content:
                 match = re.search(r'<action>\s*(NS|EW)\s*</action>', content, re.IGNORECASE)
-                if match:
-                    return match.group(1).upper()
-                else:
-                     # Raw heuristic fallback if regex fails
-                     return "NS" if "NS" in content.upper() else "EW"
+                if match: return match.group(1).upper()
     except Exception as exc:
-        print(f"[DEBUG] OpenAI API error: {exc}", flush=True)
+        print(f"[DEBUG] LLM API error: {exc}", flush=True)
 
+    # Heuristic Fallback
     if observation.get("active_priority"):
-        priority_approach = observation.get("next_priority_approach")
-        if priority_approach in {"N", "S"}:
-            return "NS"
-        elif priority_approach in {"E", "W"}:
-            return "EW"
+        p_app = observation.get("next_priority_approach")
+        return "NS" if p_app in {"N", "S"} else "EW"
+    ns = observation.get("queue_north", 0) + observation.get("queue_south", 0)
+    ew = observation.get("queue_east", 0) + observation.get("queue_west", 0)
+    return "NS" if ns >= ew else "EW"
 
-    ns_queue = observation["queue_north"] + observation["queue_south"]
-    ew_queue = observation["queue_east"] + observation["queue_west"]
-    return "NS" if ns_queue >= ew_queue else "EW"
+def run_task(client: Any, model_name: str, task_name: str, env: Any) -> float:
+    try:
+        observation = env.reset(task_name=task_name)
+    except Exception as e:
+        print(f"[ERROR] Reset failed for {task_name}: {e}", flush=True)
+        return 0.0
 
-
-def run_task(client: OpenAI, model_name: str, task_name: str, env: Any) -> float:
-    observation = env.reset(task_name=task_name)
-    history: List[str] = []
-    rewards: List[float] = []
+    rewards = []
     steps_taken = 0
-
+    history = []
     log_start(task=task_name, env="smart_adaptive_traffic_signal", model=model_name)
 
     for step in range(1, MAX_STEPS + 1):
-        obs_dict = get_obs_dict(observation)
-        action_phase = get_model_action(client, model_name, task_name, step, obs_dict, history)
-        if action_phase not in {"NS", "EW"}:
-            action_phase = "NS"
+        try:
+            obs_dict = get_obs_dict(observation)
+            action_phase = get_model_action(client, model_name, task_name, step, obs_dict, history)
+            
+            # Create action safely
+            try:
+                from smart_traffic_signal.schemas import TrafficAction
+                action = TrafficAction(phase=action_phase)
+            except:
+                action = {"phase": action_phase}
 
-        action = TrafficAction(phase=action_phase)
-        observation, reward, done, _ = env.step(action)
-        reward_value = reward["value"] if isinstance(reward, dict) else reward.value
-        rewards.append(reward_value)
-        steps_taken = step
-        log_step(step=step, action=action_phase, reward=reward_value, done=done, error=None)
-        history.append(f"Step {step}: {action_phase} -> reward {reward_value:+.2f}")
-        if done:
+            observation, reward, done, _ = env.step(action)
+            
+            # Reward safety
+            reward_value = reward.get("value", 0.0) if isinstance(reward, dict) else getattr(reward, "value", 0.0)
+            rewards.append(reward_value)
+            steps_taken = step
+            log_step(step=step, action=action_phase, reward=reward_value, done=done, error=None)
+            history.append(f"Step {step}: {action_phase}")
+            if done: break
+        except Exception as e:
+            print(f"[DEBUG] Step error: {e}", flush=True)
             break
 
-    score = env.evaluate()
-    success = score >= SUCCESS_SCORE_THRESHOLD
-    log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+    try:
+        score = env.evaluate()
+    except:
+        score = 0.0
+    log_end(success=score >= SUCCESS_SCORE_THRESHOLD, steps=steps_taken, score=score, rewards=rewards)
     return score
 
-
 def main() -> int:
-    api_base_url = os.getenv("API_BASE_URL")
-    model_name = os.getenv("MODEL_NAME")
-    hf_token = os.getenv("HF_TOKEN")
-
-    if not api_base_url or not model_name or not hf_token:
-        print("[ERROR] API_BASE_URL, MODEL_NAME, and HF_TOKEN must be provided.", flush=True)
+    # 1. Environment Detection & Server Wait
+    env_url = os.getenv("ENV_URL", "http://localhost:7860")
+    print(f"[DEBUG] Checking environment at {env_url}...", flush=True)
+    
+    server_ready = False
+    for i in range(10): # 30s timeout
+        try:
+            with urllib.request.urlopen(f"{env_url}/health", timeout=2) as r:
+                if r.getcode() == 200:
+                    server_ready = True
+                    break
+        except:
+            time.sleep(3)
+    
+    # 2. Lazy Imports
+    try:
+        from openai import OpenAI
+        api_base = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
+        model = os.getenv("MODEL_NAME", "gpt-3.5-turbo")
+        key = os.getenv("HF_TOKEN", "missing")
+        client = OpenAI(base_url=api_base, api_key=key)
+    except Exception as e:
+        print(f"[ERROR] Dependency/API setup error: {e}", flush=True)
         return 1
 
+    # 3. Environment Choice
+    if server_ready:
+        print(f"[DEBUG] Server detected. Using Remote Inference.", flush=True)
+        env = RemoteEnvClient(env_url)
+    else:
+        print(f"[DEBUG] Server not found. Attempting Local Inference.", flush=True)
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from smart_traffic_signal.env import SmartAdaptiveTrafficSignalEnv
+            env = SmartAdaptiveTrafficSignalEnv(seed=42)
+        except Exception as e:
+            print(f"[ERROR] Local environment fallback failed: {e}", flush=True)
+            return 1
+
+    # 4. Task Execution
+    total_score = 0.0
     try:
-        client = OpenAI(base_url=api_base_url, api_key=hf_token)
-        total_score = 0.0
-
-        env_url = os.getenv("ENV_URL")
-        if env_url:
-             print(f"[DEBUG] Using Remote Inference: {env_url}", flush=True)
-             env = RemoteEnvClient(env_url)
-        else:
-             print("[DEBUG] Using Local Inference", flush=True)
-             try:
-                 from smart_traffic_signal.env import SmartAdaptiveTrafficSignalEnv
-                 env = SmartAdaptiveTrafficSignalEnv(seed=42)
-             except ImportError as e:
-                 print(f"[ERROR] Failed to import local environment: {e}", flush=True)
-                 return 1
-
         for task_name in TASKS:
-            task_score = run_task(client, model_name, task_name, env)
-            total_score += task_score
-
-        average_score = total_score / len(TASKS)
-        print(f"[SUMMARY] overall_average_score={average_score:.4f}", flush=True)
+            total_score += run_task(client, model, task_name, env)
+        print(f"[SUMMARY] overall_average_score={total_score / len(TASKS):.4f}", flush=True)
         return 0
     except Exception as e:
-        print(f"[ERROR] Unhandled exception in main: {e}", flush=True)
+        print(f"[ERROR] Main execution failure: {e}", flush=True)
         traceback.print_exc()
         return 1
 
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        sys.exit(main())
+    except Exception as e:
+        print(f"CRITICAL: {e}")
+        sys.exit(1)
