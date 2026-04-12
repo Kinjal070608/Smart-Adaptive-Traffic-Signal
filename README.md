@@ -1,33 +1,46 @@
 ---
-title: Smart Adaptive Traffic Signal
+title: Smart-Sync Adaptive Traffic Signal
 emoji: 🚦
 colorFrom: blue
 colorTo: green
 sdk: docker
 pinned: false
 ---
-# Smart Adaptive Traffic Signal OpenEnv Environment
 
-A real-world traffic management environment that simulates a four-way intersection with adaptive signal control and priority handling for emergency vehicles such as ambulances.
+# 🚥 Smart-Sync: Adaptive Traffic Signal Hub
 
-## Problem Motivation
+**Meta PyTorch OpenEnv Hackathon | Final Finale Edition**
 
-Traffic signal control is a critical real-world problem. Cities waste billions annually on congestion, while emergency response times are often delayed by traffic. This environment lets agents learn to:
-- Minimize vehicle queue buildup and wait times
-- Respond dynamically to changing vehicle arrivals
-- Prioritize emergency vehicles (ambulances) to reduce critical response delays
-- Balance conflicting objectives under realistic constraints
+[![Validation](https://github.com/Kinjal070608/Smart-Adaptive-Traffic-Signal/actions/workflows/validate.yml/badge.svg)](https://github.com/Kinjal070608/Smart-Adaptive-Traffic-Signal/actions/workflows/validate.yml)
+[![Open in Hugging Face](https://hf.co/spaces/Kiki2008/smart-adaptive-traffic-signal)](https://huggingface.co/spaces/Kiki2008/smart-adaptive-traffic-signal)
 
-Agents trained here could inform actual adaptive traffic control systems deployed in smart cities.
+Smart-Sync is an AI-powered traffic management system designed to optimize urban throughput while prioritizing emergency response. Using Reinforcement Learning principles and Large Language Models (LLM), it adaptively adjusts signal phases based on real-time queue lengths and ambulance arrivals.
 
-## Environment Overview
+## 🚀 System Architecture
 
-The environment models a realistic signal control problem with:
-- four incoming approaches (north, east, south, west)
-- two signal phases: `NS` green and `EW` green
-- variable arrival rates for normal traffic
-- deterministic emergency vehicle arrivals with strict priority
-- phase switching costs and safety-aware penalties
+```mermaid
+graph TD
+    User([Judge/User]) -->|Interact| Gradio[Gradio Premium UI]
+    Gradio -->|POST /step| FastAPI[FastAPI Server]
+    Inference[inference.py] -->|POST /step| FastAPI
+    FastAPI -->|Simulate| Env[SmartAdaptiveTrafficSignalEnv]
+    
+    subgraph Core Logic
+        Env -->|Step Result| Grader[Task Graders]
+        Grader -->|Reward/Score| Env
+    end
+    
+    Env -->|Observation| LLM[LLM Controller]
+    LLM -->|Action: NS/EW| Env
+```
+
+## 🛠️ Technical Innovations
+
+- **Emergency-First Heuristic Fallback**: A resilient inference pipeline that ensures ambulance priority even if the LLM API is unavailable or returns an invalid format.
+- **Directional Capacity Scaling**: A unique environmental feature where serving an emergency vehicle consumes part of the approach capacity, modeling real-world lane-sharing constraints.
+- **High-Density Reward Structure**: Optimized for LLM reasoning with explicit penalties for deadline violations and queue imbalances.
+
+## 📖 Project Context
 
 Agents interact through a standard `step(action)`, `reset()`, and `state()` API and observe queue lengths, current phase, and priority vehicle status.
 
@@ -114,7 +127,7 @@ The environment implements the standard OpenEnv interface:
 Run the FastAPI server:
 
 ```bash
-uvicorn server:app --host 0.0.0.0 --port 8080
+uvicorn server:app --host 0.0.0.0 --port 7860
 ```
 
 The server exposes:
@@ -129,17 +142,6 @@ Run the unit test suite with:
 
 ```bash
 pytest
-```
-
-This includes:
-- environment-level tests
-- task grading sanity checks
-- API endpoint tests for the FastAPI server
-
-A helper validation script is also available:
-
-```bash
-bash validate.sh
 ```
 
 ## Baseline Inference
@@ -166,26 +168,21 @@ The script emits structured logs in this format:
 ```
 [START] task=easy env=smart_adaptive_traffic_signal model=gpt-3.5-turbo
 [STEP] step=1 action=NS reward=0.350 done=False error=None
-[STEP] step=2 action=EW reward=-0.125 done=False error=None
 ...
 [END] success=True steps=30 score=0.7500 rewards=[0.35, -0.125, ...]
-[START] task=medium env=smart_adaptive_traffic_signal model=gpt-3.5-turbo
-...
-[END] overall_score=0.6833
+[SUMMARY] overall_average_score=0.6833
 ```
-
-Each task runs to completion or `MAX_STEPS` (40). Final score is computed by the task's grader function based on metrics like throughput, priority passage, and queue length.
 
 ## Pre-Submission Checklist
 
 Before submitting, verify:
 
-- [ ] Docker builds cleanly: `docker build -t smart-traffic-signal .`
-- [ ] OpenEnv spec passes: `openenv validate`
-- [ ] HF Space deploys and responds to `/health`
-- [ ] Baseline inference runs without errors and produces valid scores
-- [ ] All 3 tasks execute and graders return scores in `[0.0, 1.0]`
-- [ ] Repository includes `openenv.yaml`, `Dockerfile`, `requirements.txt`, `inference.py`, and `README.md`
+- [x] Docker builds cleanly: `docker build -t smart-traffic-signal .`
+- [x] OpenEnv spec passes: `openenv validate`
+- [x] HF Space deploys and responds to `/health`
+- [x] Baseline inference runs without errors and produces valid scores
+- [x] All 3 tasks execute and graders return scores in `[0.0, 1.0]`
+- [x] Repository includes `openenv.yaml`, `Dockerfile`, `requirements.txt`, `inference.py`, and `README.md`
 
 ## Docker
 
@@ -195,5 +192,3 @@ Build and run the container:
 docker build -t smart-traffic-signal .
 docker run --rm -p 7860:7860 smart-traffic-signal
 ```
-
-The container starts the FastAPI server for the OpenEnv-compatible space.
