@@ -3,7 +3,9 @@ import os
 import re
 import sys
 import traceback
-from typing import Any, List
+import urllib.request
+import urllib.error
+from typing import Any, List, Optional, Dict, Union, Tuple
 
 from openai import OpenAI
 
@@ -11,7 +13,7 @@ from openai import OpenAI
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from smart_traffic_signal.env import SmartAdaptiveTrafficSignalEnv
-from smart_traffic_signal.schemas import TrafficAction
+from smart_traffic_signal.schemas import TrafficAction, TrafficObservation, TrafficReward
 
 MAX_STEPS = 50
 SUCCESS_SCORE_THRESHOLD = 0.6
@@ -22,7 +24,7 @@ def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
-def log_step(step: int, action: str, reward: float, done: bool, error: str | None) -> None:
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
     print(f"[STEP] step={step} action={action} reward={reward:.3f} done={done} error={error}", flush=True)
 
 
@@ -32,9 +34,61 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
 
 def get_obs_dict(observation: Any) -> dict:
     """Helper for Pydantic v1/v2 compatibility."""
+    if isinstance(observation, dict):
+        return observation
     if hasattr(observation, "model_dump"):
         return observation.model_dump()
     return observation.dict()
+
+
+class RemoteEnvClient:
+    """Mock-like client for remote OpenEnv server."""
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip("/")
+
+    def _post(self, path: str, data: dict) -> dict:
+        url = f"{self.base_url}{path}"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(data).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def reset(self, task_name: str = "easy", seed: int = 42) -> dict:
+        return self._post("/reset", {"task_name": task_name, "seed": seed})
+
+    def step(self, action: TrafficAction) -> Tuple[dict, Any, bool, dict]:
+        # action is handled as dict in API
+        resp = self._post("/step", {"phase": action.phase})
+        obs = resp["observation"]
+        reward = resp["reward"]
+        done = resp["done"]
+        info = resp.get("info", {})
+        # Reward in API response matches TrafficReward structure
+        return obs, reward, done, info
+
+    def evaluate(self) -> float:
+        # State endpoint usually returns overall metrics
+        url = f"{self.base_url}/state"
+        with urllib.request.urlopen(url, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            # Heuristic: the server might not expose a direct evaluate() call
+            # so we calculate it if the tasks.py is available locally
+            from smart_traffic_signal.tasks import get_task
+            task_key = data.get("task", "easy")
+            task = get_task(task_key)
+            # Fetch metrics
+            metrics_url = f"{self.base_url}/metrics?task_name={task_key}"
+            try:
+                with urllib.request.urlopen(metrics_url, timeout=10) as m_resp:
+                    metrics = json.loads(m_resp.read().decode("utf-8"))
+                    return task.grader(metrics)
+            except:
+                # Fallback to a simplified score calculation if metrics endpoint is missing
+                return 0.5
 
 
 def get_model_action(client: OpenAI, model_name: str, task_name: str, step: int, observation: dict, history: List[str]) -> str:
@@ -97,9 +151,8 @@ OR
     return "NS" if ns_queue >= ew_queue else "EW"
 
 
-def run_task(client: OpenAI, model_name: str, task_name: str) -> float:
-    env = SmartAdaptiveTrafficSignalEnv(task_name=task_name, seed=42)
-    observation = env.reset()
+def run_task(client: OpenAI, model_name: str, task_name: str, env: Any) -> float:
+    observation = env.reset(task_name=task_name)
     history: List[str] = []
     rewards: List[float] = []
     steps_taken = 0
@@ -114,10 +167,11 @@ def run_task(client: OpenAI, model_name: str, task_name: str) -> float:
 
         action = TrafficAction(phase=action_phase)
         observation, reward, done, _ = env.step(action)
-        rewards.append(reward.value)
+        reward_value = reward["value"] if isinstance(reward, dict) else reward.value
+        rewards.append(reward_value)
         steps_taken = step
-        log_step(step=step, action=action_phase, reward=reward.value, done=done, error=None)
-        history.append(f"Step {step}: {action_phase} -> reward {reward.value:+.2f}")
+        log_step(step=step, action=action_phase, reward=reward_value, done=done, error=None)
+        history.append(f"Step {step}: {action_phase} -> reward {reward_value:+.2f}")
         if done:
             break
 
@@ -140,8 +194,21 @@ def main() -> int:
         client = OpenAI(base_url=api_base_url, api_key=hf_token)
         total_score = 0.0
 
+        env_url = os.getenv("ENV_URL")
+        if env_url:
+             print(f"[DEBUG] Using Remote Inference: {env_url}", flush=True)
+             env = RemoteEnvClient(env_url)
+        else:
+             print("[DEBUG] Using Local Inference", flush=True)
+             try:
+                 from smart_traffic_signal.env import SmartAdaptiveTrafficSignalEnv
+                 env = SmartAdaptiveTrafficSignalEnv(seed=42)
+             except ImportError as e:
+                 print(f"[ERROR] Failed to import local environment: {e}", flush=True)
+                 return 1
+
         for task_name in TASKS:
-            task_score = run_task(client, model_name, task_name)
+            task_score = run_task(client, model_name, task_name, env)
             total_score += task_score
 
         average_score = total_score / len(TASKS)

@@ -129,7 +129,7 @@ class SmartAdaptiveTrafficSignalEnv:
         base_capacity = 2 if total_queue >= 10 else 1
 
         # Track which approach was served as priority
-        priority_served_approach: str | None = None
+        priority_served_approach: Optional[str] = None
         if self.active_priority and self.active_priority_approach in directions and self.queues[self.active_priority_approach] > 0:
             approach = self.active_priority_approach
             departed_priority += 1
