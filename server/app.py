@@ -84,10 +84,11 @@ async def state(task_name: str = "easy") -> Dict[str, object]:
 def main() -> None:
     """Entry point invoked by the [project.scripts] console script."""
     import uvicorn
+    import os
+    import sys
 
     # Mount Gradio UI at root if environment flag is set
-    import os
-    if os.getenv("ENABLE_WEB_INTERFACE", "false").lower() == "true":
+    if os.getenv("ENABLE_WEB_INTERFACE", "true").lower() == "true":
         try:
             import gradio as gr
             root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -98,7 +99,8 @@ def main() -> None:
             demo = run_demo()
             mounted_app = gr.mount_gradio_app(app, demo, path="/")
             uvicorn.run(mounted_app, host="0.0.0.0", port=7860)
-        except Exception:
+        except Exception as e:
+            print(f"Gradio mounting failed: {e}")
             uvicorn.run(app, host="0.0.0.0", port=7860)
     else:
         uvicorn.run(app, host="0.0.0.0", port=7860)

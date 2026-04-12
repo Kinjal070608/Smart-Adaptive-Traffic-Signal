@@ -3,7 +3,7 @@ import os
 import sys
 import json
 import time
-from typing import cast, Dict, Any, Tuple
+from typing import cast, Dict, Any, Tuple, List
 from smart_traffic_signal.env import SmartAdaptiveTrafficSignalEnv
 from smart_traffic_signal.schemas import TrafficAction, Phase
 
@@ -19,15 +19,16 @@ CSS = """
 .queue-pill { background: #0ea5e9; padding: 2px 8px; border-radius: 12px; font-size: 0.8em; margin-top: 5px; }
 .priority-alert { background: #f59e0b; color: #78350f; font-weight: bold; padding: 10px; border-radius: 8px; animation: pulse 2s infinite; text-align: center; margin: 10px 0; }
 @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
-.metric-card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 15px; text-align: center; }
-.metric-val { font-size: 1.5em; color: #38bdf8; font-family: monospace; }
+.sparkline-container { display: flex; align-items: flex-end; height: 60px; gap: 2px; background: #1e293b; padding: 10px; border-radius: 8px; border: 1px solid #334155; }
+.spark-bar { background: #38bdf8; width: 6px; border-radius: 2px 2px 0 0; }
+.spark-label { color: #94a3b8; font-size: 0.7em; margin-bottom: 5px; }
 """
 
 # Global state for UI persistence
 state = {
     "env": None,
     "last_obs": None,
-    "history": []
+    "history": [] # List of total_queue counts
 }
 
 def format_grid_html(obs: Dict[str, Any]) -> str:
@@ -38,11 +39,9 @@ def format_grid_html(obs: Dict[str, Any]) -> str:
     p_active = obs.get("active_priority", False)
     p_app = obs.get("next_priority_approach", "NONE")
     
-    # helper to check if a direction has a green light
     light_ns = "light-green" if phase == "NS" else "light-red"
     light_ew = "light-green" if phase == "EW" else "light-red"
     
-    # helper for priority highlighting
     def cell_style(app: str):
         if p_active and p_app == app:
             return "border: 2px solid #f59e0b; background: #451a03;"
@@ -87,37 +86,55 @@ def format_grid_html(obs: Dict[str, Any]) -> str:
     """
     return grid_html
 
+def format_analytics_html(history: List[int]) -> str:
+    """Generate a clean sparkline chart for congestion metrics."""
+    if not history: return "<p style='color:#94a3b8; font-size:0.8em;'>No data yet</p>"
+    
+    max_q = max(history) if history else 1
+    bars = ""
+    # Keep only last 30 steps for visual clarity
+    for q in history[-30:]:
+        height = (q / 30.0) * 100 # Scaled height
+        bars += f"<div class='spark-bar' style='height: {min(height, 100)}%; opacity: {0.4 + (q/max_q)*0.6};'></div>"
+    
+    return f"""
+    <div style="margin-top:10px;">
+        <div class="spark-label">Congestion Trend (Last 30 Steps)</div>
+        <div class="sparkline-container">
+            {bars}
+        </div>
+    </div>
+    """
+
 def initialize_ui(task: str, seed: int):
     env = SmartAdaptiveTrafficSignalEnv(task_name=task, seed=int(seed))
     obs = env.reset()
     state["env"] = env
     state["last_obs"] = obs.model_dump()
-    state["history"] = []
+    state["history"] = [obs.queue_north + obs.queue_east + obs.queue_south + obs.queue_west]
     
-    metrics = env.get_metrics()
-    return format_grid_html(state["last_obs"]), f"Ready - Task: {task}", 0, 0.0, f"Score: {env.evaluate():.4f}"
+    return format_grid_html(state["last_obs"]), format_analytics_html(state["history"]), f"Ready - Task: {task}", 0, 0.0, f"Score: {env.evaluate():.4f}"
 
 def run_step(phase: str):
     if state["env"] is None:
-        return gr.update(), "Please reset first", 0, 0.0, "Score: 0.0"
+        return gr.update(), gr.update(), "Please reset first", 0, 0.0, "Score: 0.0"
     
     env = state["env"]
     action = TrafficAction(phase=cast(Phase, phase))
     obs, reward, done, info = env.step(action)
     state["last_obs"] = obs.model_dump()
     
-    metrics = env.get_metrics()
-    score = env.evaluate()
+    # Update history
+    total_q = obs.queue_north + obs.queue_east + obs.queue_south + obs.queue_west
+    state["history"].append(total_q)
     
+    score = env.evaluate()
     status = "COMPLETED" if done else "RUNNING"
-    return format_grid_html(state["last_obs"]), f"Step {obs.step} - Status: {status}", obs.step, reward.value, f"Score: {score:.4f}"
+    return format_grid_html(state["last_obs"]), format_analytics_html(state["history"]), f"Step {obs.step} - Status: {status}", obs.step, reward.value, f"Score: {score:.4f}"
 
 def run_auto_move():
-    """Simple heuristic logic for the 'Auto' button in UI."""
     if state["env"] is None: return run_step("NS")
-    
     obs = state["last_obs"]
-    # Priority check
     if obs.get("active_priority"):
         app = obs.get("next_priority_approach")
         phase = "NS" if app in {"N", "S"} else "EW"
@@ -125,7 +142,6 @@ def run_auto_move():
         ns = obs.get("queue_north", 0) + obs.get("queue_south", 0)
         ew = obs.get("queue_east", 0) + obs.get("queue_west", 0)
         phase = "NS" if ns >= ew else "EW"
-    
     return run_step(phase)
 
 def run_demo():
@@ -136,6 +152,9 @@ def run_demo():
         with gr.Row():
             with gr.Column(scale=2):
                 grid_viz = gr.HTML(value="<p style='text-align:center;'>Initialize environment to see simulation</p>")
+                
+                with gr.Accordion("📉 Visual Analytics", open=True):
+                    analytics_viz = gr.HTML(value=format_analytics_html([]))
                 
                 with gr.Row():
                     phase_input = gr.Radio(["NS", "EW"], value="NS", label="Signal Phase Control")
@@ -163,18 +182,12 @@ def run_demo():
             - **NS Phase**: North-South traffic moves.
             - **EW Phase**: East-West traffic moves.
             - **Emergency First**: Agents are penalized heavily for delaying ambulances.
-            - **Capacity Scaling**: Served roads reduce capacity for normal vehicles when a priority vehicle passes.
-            
-            ### Legend
-            - 🟢 **Green Light**: Directions being served.
-            - 🔴 **Red Light**: Directions waiting.
-            - ⚠️ **Orange Flow**: Active Emergency Vehicle.
+            - **Congestion Trend**: The analytics chart tracks the total vehicle backlog. A stable or declining line indicates 'Smart' control.
             """)
 
-        # Event Bindings
-        reset_btn.click(initialize_ui, [task_input, seed_input], [grid_viz, status_txt, step_gauge, reward_gauge, score_display])
-        step_btn.click(run_step, [phase_input], [grid_viz, status_txt, step_gauge, reward_gauge, score_display])
-        auto_btn.click(run_auto_move, None, [grid_viz, status_txt, step_gauge, reward_gauge, score_display])
+        reset_btn.click(initialize_ui, [task_input, seed_input], [grid_viz, analytics_viz, status_txt, step_gauge, reward_gauge, score_display])
+        step_btn.click(run_step, [phase_input], [grid_viz, analytics_viz, status_txt, step_gauge, reward_gauge, score_display])
+        auto_btn.click(run_auto_move, None, [grid_viz, analytics_viz, status_txt, step_gauge, reward_gauge, score_display])
 
     return demo
 
